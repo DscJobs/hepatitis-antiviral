@@ -6,15 +6,9 @@ import (
 	"fmt"
 	"hepatitis-antiviral/cli"
 	"hepatitis-antiviral/migrations"
-	"hepatitis-antiviral/sources/jsonfile"
 	"hepatitis-antiviral/sources/mongo"
-	"hepatitis-antiviral/transform"
 	"os"
-	"reflect"
-	"regexp"
-	"strings"
 	"time"
-	"unicode"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/infinitybotlist/eureka/crypto"
@@ -35,508 +29,86 @@ var source mongo.MongoSource
 
 type UUID = string
 
-type Bot struct {
-	BotID            string        `src:"botID" dest:"bot_id" unique:"true"`
-	QueueName        string        `src:"botName" dest:"queue_name"`
-	QueueAvatar      string        `src:"avatar" dest:"queue_avatar"`
-	ClientID         string        `src:"clientID" dest:"client_id" unique:"true"`
-	Tags             []string      `src:"tags" dest:"tags"`
-	Prefix           *string       `src:"prefix" dest:"prefix"`
-	Owner            string        `src:"main_owner" dest:"owner" fkey:"users,user_id"`
-	AdditionalOwners []string      `src:"additional_owners" dest:"additional_owners" notnull:"true"`
-	StaffBot         bool          `src:"staff" dest:"staff_bot" default:"false"`
-	Short            string        `src:"short" dest:"short"`
-	Long             string        `src:"long" dest:"long"`
-	Library          *string       `src:"library" dest:"library" default:"'custom'"`
-	ExtraLinks       []any         `src:"extra_links" dest:"extra_links" mark:"jsonb"`
-	NSFW             bool          `src:"nsfw" dest:"nsfw" default:"false"`
-	Premium          bool          `src:"premium" dest:"premium" default:"false"`
-	Servers          int           `src:"servers" dest:"servers" default:"0"`
-	Shards           int           `src:"shards" dest:"shards" default:"0"`
-	Users            int           `src:"users" dest:"users" default:"0"`
-	ShardSet         []int         `src:"shardArray" dest:"shard_list" default:"{}"`
-	Votes            int           `src:"votes" dest:"votes" default:"0"`
-	Clicks           int           `src:"clicks" dest:"clicks" default:"0"`
-	InviteClicks     int           `src:"invite_clicks" dest:"invite_clicks" default:"0"`
-	Banner           *string       `src:"background,omitempty" dest:"banner" default:"null"`
-	Invite           *string       `src:"invite" dest:"invite" default:"null"`
-	Type             string        `src:"type" dest:"type" default:"'pending'"`
-	Vanity           *string       `src:"vanity" dest:"vanity" unique:"true"`
-	ExternalSource   string        `src:"external_source,omitempty" dest:"external_source" default:"null"`
-	ListSource       string        `src:"listSource,omitempty" dest:"list_source" mark:"uuid" default:"null"`
-	VoteBanned       bool          `src:"vote_banned,omitempty" dest:"vote_banned" default:"false" notnull:"true"`
-	CrossAdd         bool          `src:"cross_add" dest:"cross_add" default:"true" notnull:"true"`
-	StartPeriod      time.Time     `src:"start_period,omitempty" dest:"start_premium_period" default:"NOW()" notnull:"true"`
-	SubPeriod        time.Duration `src:"sub_period,omitempty" dest:"premium_period_length" default:"'12 hours'" mark:"interval" notnull:"true"`
-	CertReason       string        `src:"cert_reason,omitempty" dest:"cert_reason" default:"null"`
-	Announce         bool          `src:"announce,omitempty" dest:"announce" default:"false"`
-	AnnounceMessage  string        `src:"announce_msg,omitempty" dest:"announce_message" default:"null"`
-	Uptime           int64         `src:"uptime,omitempty" dest:"uptime" default:"0"`
-	TotalUptime      int64         `src:"total_uptime,omitempty" dest:"total_uptime" default:"0"`
-	ClaimedBy        string        `src:"claimedBy,omitempty" dest:"claimed_by" default:"null"`
-	Note             string        `src:"note,omitempty" dest:"approval_note" default:"'No note'" notnull:"true"`
-	Date             time.Time     `src:"date,omitempty" dest:"created_at" default:"NOW()" notnull:"true"`
-	WebAuth          *string       `src:"webAuth,omitempty" dest:"web_auth" default:"null"`
-	WebURL           *string       `src:"webURL,omitempty" dest:"webhook" default:"null"`
-	WebHMac          *bool         `src:"webHMac" dest:"hmac" default:"false"`
-	UniqueClicks     []string      `src:"unique_clicks,omitempty" dest:"unique_clicks" default:"{}" notnull:"true"`
-	Token            string        `src:"token" dest:"api_token" default:"uuid_generate_v4()"`
-	LastClaimed      time.Time     `src:"last_claimed,omitempty" dest:"last_claimed" default:"null"`
+type Details struct {
+	UserID     string `src:"userID" dest:"userID" unique:"true" fkey:"users,userID"`
+	ExpServers int    `src:"exp_servers" dest:"expServers"`
+	Exp        int    `src:"exp" dest:"exp"`
+	Active     int    `src:"active" dest:"active"`
+	Salary     int    `src:"salary" dest:"salary"`
 }
 
-var botTransforms = map[string]cli.TransformFunc{
-	"ClaimedBy": func(tr cli.TransformRow) any {
-		if tr.CurrentValue == nil {
-			return nil
-		}
-
-		if strings.ToLower(tr.CurrentValue.(string)) == "none" || tr.CurrentValue.(string) == "" {
-			return nil
-		}
-
-		return tr.CurrentValue
-	},
-	"StartPeriod": func(tr cli.TransformRow) any {
-		if tr.CurrentValue == nil {
-			return nil
-		}
-
-		switch val := tr.CurrentValue.(type) {
-		case time.Time:
-			return val
-		case int32:
-			return time.Unix(0, int64(val*int32(time.Millisecond)))
-		case int64:
-			return time.Unix(0, int64(val*int64(time.Millisecond)))
-		case float64:
-			return time.Unix(0, int64(val*float64(time.Millisecond)))
-		}
-
-		panic("invalid type for StartPeriod")
-	},
-	"SubPeriod": func(tr cli.TransformRow) any {
-		// Convert to time.Duration
-		if tr.CurrentValue == nil {
-			return nil
-		}
-
-		switch val := tr.CurrentValue.(type) {
-		case time.Duration:
-			return val
-		case int32:
-			return time.Duration(val) * time.Millisecond
-		case int64:
-			return time.Duration(val) * time.Millisecond
-		case float64:
-			return time.Duration(val) * time.Millisecond
-		}
-
-		panic("invalid type for SubPeriod: " + reflect.TypeOf(tr.CurrentValue).String())
-	},
-	"Type": func(tr cli.TransformRow) any {
-		if tr.CurrentValue == nil {
-			return "approved"
-		}
-
-		if val, ok := tr.CurrentRecord["certified"].(bool); ok && val {
-			return "certified"
-		}
-
-		if tr.CurrentValue == "approved" || tr.CurrentValue == "denied" {
-			return tr.CurrentValue
-		}
-
-		if val, ok := tr.CurrentRecord["claimed"].(bool); ok && val {
-			return "claimed"
-		}
-
-		return tr.CurrentValue
-	},
-	"UniqueClicks": func(tr cli.TransformRow) any {
-		return []string{}
-	},
-	"ExtraLinks": func(tr cli.TransformRow) any {
-		var links = []link{}
-
-		for _, cols := range []string{"Website", "Support", "Github", "Donate"} {
-			col := strings.ToLower(cols)
-			if tr.CurrentRecord[col] != nil {
-				value := parseLink(col, tr.CurrentRecord[col].(string))
-
-				if value == "" {
-					continue
-				}
-
-				links = append(links, link{
-					Name:  cols,
-					Value: value,
-				})
-			}
-		}
-
-		return links
-	},
-	"ClientID": transform.DefaultTransform(func(tr cli.TransformRow) any {
-		botId := tr.CurrentRecord["botID"].(string)
-
-		cli.NotifyMsg("info", "No client ID for bot "+botId+", finding one")
-		_, rerr := sess.Request("GET", "https://discord.com/api/v10/applications/"+botId+"/rpc", nil)
-
-		if rerr == nil {
-			source.Conn.Database("infinity").Collection("bots").UpdateOne(context.Background(), bson.M{
-				"botID": botId,
-			}, bson.M{
-				"$set": bson.M{
-					"clientID": botId,
-				},
-			})
-
-			return botId
-		}
-
-		for rerr != nil {
-			clientId := cli.PromptServerChannel("What is the client ID for " + botId + "?")
-
-			if clientId == "DEL" {
-				source.Conn.Database("infinity").Collection("bots").DeleteOne(context.Background(), bson.M{"botID": botId})
-				return "SKIP"
-			}
-
-			_, rerr = sess.Request("GET", "https://discord.com/api/v10/applications/"+clientId+"/rpc", nil)
-
-			if rerr != nil {
-				fmt.Println("Client ID fetch error:", rerr)
-				continue
-			}
-
-			source.Conn.Database("infinity").Collection("bots").UpdateOne(context.Background(), bson.M{
-				"botID": botId,
-			}, bson.M{
-				"$set": bson.M{
-					"clientID": clientId,
-				},
-			})
-
-			return clientId
-		}
-
-		return botId
-	}),
-	"AdditionalOwners": transform.ToList,
-	"Tags":             transform.ToList,
-	"Owner": func(tr cli.TransformRow) any {
-		if tr.CurrentValue == nil {
-			return nil
-		}
-
-		userId := tr.CurrentValue.(string)
-
-		userId = strings.TrimSpace(userId)
-
-		var count int64
-
-		err := cli.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE user_id = $1", userId).Scan(&count)
-
-		if err != nil {
-			panic(err)
-		}
-
-		if count == 0 {
-			cli.NotifyMsg("warning", "User not found, adding")
-
-			if _, err = cli.Pool.Exec(ctx, "INSERT INTO users (user_id, api_token, extra_links) VALUES ($1, $2, $3)", userId, crypto.RandString(128), []link{}); err != nil {
-				panic(err)
-			}
-		}
-
-		return userId
-	},
-	"Vanity": func(tr cli.TransformRow) any {
-		if tr.CurrentValue == nil {
-			cli.NotifyMsg("error", "Got nil name for current context: "+fmt.Sprint(tr.CurrentRecord["botID"]))
-			panic("Got nil name")
-		}
-
-		name := tr.CurrentValue.(string)
-
-		// Strip out unicode characters
-		name = strings.Map(func(r rune) rune {
-			if r > unicode.MaxASCII {
-				return -1
-			}
-			return r
-		}, name)
-
-		if name == "" {
-			panic("Got empty name")
-		}
-
-		name = strings.TrimSuffix(name, "-")
-
-		// Check if vanity is taken
-		var count int64
-
-		err := cli.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM bots WHERE lower(vanity) = $1", strings.ToLower(name)).Scan(&count)
-
-		if err != nil {
-			panic(err)
-		}
-
-		if count != 0 {
-			return strings.ToLower(name) + "-" + crypto.RandString(12)
-		}
-
-		return strings.ToLower(name)
-	},
+type CV struct {
+	UserID    string    `src:"userID" dest:"userID" unique:"true" fkey:"users,userID"`
+	Overview  string    `src:"overview" dest:"overview"`
+	Hire      string    `src:"hire" dest:"hire"`
+	Birthday  time.Time `src:"ddhhd" dest:"birthday" default:"NOW()"`
+	Link      string    `src:"link,omitempty" dest:"link" default:"null"`
+	Email     string    `src:"email,omitempty" dest:"email" default:"null"`
+	Job       string    `src:"job,omitempty" dest:"job" default:"null"`
+	Vanity    string    `src:"vanity,omitempty" dest:"vanity" default:"null"`
+	Private   bool      `src:"private" dest:"private" default:"false"`
+	Developer bool      `src:"developer" dest:"developer" default:"false"`
+	Current   bool      `src:"current" dest:"current" default:"false"`
+	ExpToggle bool      `src:"expToggle" dest:"expToggle" default:"false"`
+	Nitro     bool      `src:"nitro" dest:"nitro" default:"false"`
+	Views     int       `src:"views" dest:"views" default:"0"`
+	Likes     int       `src:"likes" dest:"likes" default:"0"`
+	Date      time.Time `src:"shhs" dest:"date" default:"NOW()"`
 }
 
-type ActionLog struct {
-	BotID     string    `src:"botID" dest:"bot_id" fkey:"bots,bot_id"`
-	StaffID   string    `src:"staff_id" dest:"staff_id" fkey:"users,user_id"`
-	ActReason string    `src:"reason" dest:"action_reason" default:"'No reason'"`
-	Timestamp time.Time `src:"ts" dest:"ts" default:"NOW()"`
-	Event     string    `src:"event" dest:"event"`
+type Requests struct {
+	UserID  string `src:"userID" dest:"userID" fkey:"users,userID"`
+	CV      string `src:"cv" dest:"cv"`
+	Content string `src:"content" dest:"content"`
+	Tag     string `src:"tag" dest:"tag"`
 }
 
-type Claims struct {
-	BotID       string    `src:"botID" dest:"bot_id" unique:"true" fkey:"bots,bot_id"`
-	ClaimedBy   string    `src:"claimedBy" dest:"claimed_by"`
-	Claimed     bool      `src:"claimed" dest:"claimed"`
-	ClaimedAt   time.Time `src:"claimedAt" dest:"claimed_at" default:"NOW()"`
-	UnclaimedAt time.Time `src:"unclaimedAt" dest:"unclaimed_at" default:"NOW()"`
-}
-
-type OnboardData struct {
-	UserID      string         `src:"userID" dest:"user_id" fkey:"users,user_id"`
-	OnboardCode string         `src:"onboard_code" dest:"onboard_code"`
-	Data        map[string]any `src:"data" dest:"data" default:"{}"`
+type Review struct {
+	UserID  string    `src:"userID" dest:"userID" fkey:"users,userID"`
+	CV      string    `src:"cv" dest:"cv"`
+	Content string    `src:"content" dest:"content"`
+	Likes   []string  `src:"likes" dest:"likes" default:"{}"`
+	Reports []string  `src:"reports" dest:"reports" default:"{}"`
+	Type    string    `src:"type" dest:"type" default:"pending"`
+	Rate    int       `src:"rate" dest:"rate" default:"0"`
+	Date    time.Time `src:"date" dest:"date" default:"now()"`
 }
 
 type User struct {
-	UserID                    string    `src:"userID" dest:"user_id" unique:"true" default:"SKIP"`
-	Experiments               []string  `src:"experiments" dest:"experiments" default:"{}"`
-	StaffOnboarded            bool      `src:"staff_onboarded" dest:"staff_onboarded" default:"false"`
-	StaffOnboardState         string    `src:"staff_onboard_state" dest:"staff_onboard_state" default:"'pending'"`
-	StaffOnboardLastStartTime time.Time `src:"staff_onboard_last_start_time,omitempty" dest:"staff_onboard_last_start_time" default:"null"`
-	StaffOnboardMacroTime     time.Time `src:"staff_onboard_macro_time,omitempty" dest:"staff_onboard_macro_time" default:"null"`
-	StaffOnboardSessionCode   string    `src:"staff_onboard_session_code,omitempty" dest:"staff_onboard_session_code,omitempty" default:"null"`
-	StaffOnboardGuild         string    `src:"staff_onboard_guild,omitempty" dest:"staff_onboard_guild,omitempty" default:"null"`
-	StaffRPCLastVerify        time.Time `src:"staff_rpc_last_verify" dest:"staff_rpc_last_verify" default:"NOW() - interval '1 hour'"`
-	Staff                     bool      `src:"staff" dest:"staff" default:"false"`
-	Admin                     bool      `src:"admin" dest:"admin" default:"false"`
-	HAdmin                    bool      `src:"hadmin" dest:"hadmin" default:"false"`
-	Certified                 bool      `src:"certified" dest:"certified" default:"false"`
-	IBLDev                    bool      `src:"ibldev" dest:"ibldev" default:"false"`
-	IBLHDev                   bool      `src:"iblhdev" dest:"iblhdev" default:"false"`
-	Owner                     bool      `src:"owner" dest:"owner" default:"false"`
-	Developer                 bool      `src:"developer" dest:"developer" default:"false"`
-	CaptchaSponsorEnabled     bool      `src:"captcha_sponsor_enabled" dest:"captcha_sponsor_enabled" default:"true"`
-	ExtraLinks                []any     `src:"extra_links" dest:"extra_links" mark:"jsonb"`
-	APIToken                  string    `src:"apiToken" dest:"api_token"`
-	About                     *string   `src:"about,omitempty" dest:"about" default:"'I am a very mysterious person'"`
-	VoteBanned                bool      `src:"vote_banned" dest:"vote_banned" default:"false"`
-	Banned                    bool      `src:"banned" dest:"banned" default:"false"`
+	UserID          string            `src:"userID" dest:"userID" unique:"true"`
+	Token           string            `src:"token" dest:"token"`
+	Votes           []string          `src:"votes" dest:"votes" default:"{}"`
+	Banned          bool              `src:"banned" dest:"banned" default:"false"`
+	Staff           bool              `src:"staff" dest:"staff" default:"false"`
+	Premium         bool              `src:"premium" dest:"premium" default:"false"`
+	LifetimePremium bool              `src:"lifetime" dest:"lifetime_premium" default:"false"`
+	PremiumDuration time.Time         `src:"duration" dest:"premiumDuration" default:"now()"`
+	Notifications   map[string]string `src:"notifications" dest:"notifications" default:"{}"`
 }
 
 var userTransforms = map[string]cli.TransformFunc{
-	"UserID": func(tr cli.TransformRow) any {
-		if tr.CurrentValue == nil {
-			return tr.CurrentValue
-		}
-
-		userId := tr.CurrentValue.(string)
-
-		return strings.TrimSpace(userId)
-	},
-	"APIToken": transform.DefaultTransform(func(tr cli.TransformRow) any {
-		return crypto.RandString(128)
-	}),
-	"ExtraLinks": func(tr cli.TransformRow) any {
-		var links = []link{}
-
-		for _, cols := range []string{"Website", "Github"} {
-			col := strings.ToLower(cols)
-			if tr.CurrentRecord[col] != nil {
-				value := parseLink(col, tr.CurrentRecord[col].(string))
-
-				if value == "" {
-					continue
-				}
-
-				links = append(links, link{
-					Name:  cols,
-					Value: value,
-				})
-			}
-		}
-
-		return links
+	"Token": func(a cli.TransformRow) any {
+		return crypto.RandString(255)
 	},
 }
 
-type Announcements struct {
-	UserID         string    `src:"userID" dest:"user_id" fkey:"users,user_id"`
-	AnnouncementID string    `src:"announceID" dest:"id" mark:"uuid" default:"uuid_generate_v4()" omit:"true"`
-	Title          string    `src:"title" dest:"title"`
-	Content        string    `src:"content" dest:"content"`
-	ModifiedDate   time.Time `src:"modifiedDate" dest:"modified_date" default:"NOW()"`
-	ExpiresDate    time.Time `src:"expiresDate,omitempty" dest:"expires_date" default:"NOW()"`
-	Status         string    `src:"status" dest:"status" default:"'active'"`
-	Targetted      bool      `src:"targetted" dest:"targetted" default:"false"`
-	Target         []string  `src:"target,omitempty" dest:"target" default:"null"`
-}
-
-var announcementTransforms = map[string]cli.TransformFunc{
-	"AnnouncementID": transform.UUIDDefault,
-}
-
-type Votes struct {
-	UserID string    `src:"userID" dest:"user_id" fkey:"users,user_id" fkignore:"true"`
-	BotID  string    `src:"botID" dest:"bot_id" fkey:"bots,bot_id"`
-	Date   time.Time `src:"date" dest:"created_at" default:"NOW()"`
-}
-
-type PackVotes struct {
-	UserID string    `src:"userID" dest:"user_id" fkey:"users,user_id"`
-	URL    string    `src:"url" dest:"url" fkey:"packs,url"`
-	Upvote bool      `src:"upvote" dest:"upvote"`
-	Date   time.Time `src:"date" dest:"created_at" default:"NOW()"`
-}
-
-type Packs struct {
-	Owner string    `src:"owner" dest:"owner" fkey:"users,user_id"`
-	Name  string    `src:"name" dest:"name" default:"'My pack'"`
-	Short string    `src:"short" dest:"short"`
-	Tags  []string  `src:"tags" dest:"tags"`
-	URL   string    `src:"url" dest:"url" unique:"true"`
-	Date  time.Time `src:"date" dest:"created_at" default:"NOW()"`
-	Bots  []string  `src:"bots" dest:"bots"`
-}
-
-var packTransforms = map[string]cli.TransformFunc{
-	"Tags": transform.ToList,
-	"Bots": transform.ToList,
-	"URL": func(tr cli.TransformRow) any {
-		if tr.CurrentValue == nil {
-			return crypto.RandString(12)
-		}
-
-		reg, _ := regexp.Compile("[^a-zA-Z0-9 ]+")
-
-		return reg.ReplaceAllString(tr.CurrentValue.(string), "")
-	},
-}
-
-type Reviews struct {
-	ID       string    `src:"review_id" unique:"true" dest:"id" mark:"uuid" default:"uuid_generate_v4()" omit:"true"`
-	BotID    string    `src:"botID" dest:"bot_id" fkey:"bots,bot_id"`
-	Author   string    `src:"author" dest:"author" fkey:"users,user_id"`
-	Content  string    `src:"content" dest:"content" default:"'Very good bot!'"`
-	StarRate int       `src:"star_rate" dest:"stars" default:"1"`
-	Date     time.Time `src:"date" dest:"created_at" default:"NOW()"`
-	ParentID string    `src:"parentID,omitempty" dest:"parent_id" mark:"uuid" default:"null"`
-}
-
-var reviewTransforms = map[string]cli.TransformFunc{
-	"ID": transform.UUIDDefault,
-}
-
-type Tickets struct {
-	ChannelID     string    `src:"channelID" dest:"channel_id"`
-	TopicID       string    `src:"topicID" dest:"topic_id"`
-	Topic         string    `src:"topic" dest:"topic" mark:"jsonb" default:"'{}'"`
-	Issue         string    `src:"issue" dest:"issue"`
-	TicketContext string    `src:"ticketContext" dest:"ticket_context" mark:"jsonb" default:"'{}'"`
-	Messages      string    `src:"messages" dest:"messages" mark:"jsonb" default:"'{}'"`
-	UserID        string    `src:"userID" dest:"user_id"` // No fkey here bc a user may not be a user on the table yet
-	TicketID      string    `src:"ticketID" dest:"id" unique:"true"`
-	CloseUserID   string    `src:"closeUserID,omitempty" dest:"close_user_id" default:"null"`
-	Open          bool      `src:"open" dest:"open" default:"true"`
-	Date          time.Time `src:"date" dest:"created_at" default:"NOW()"`
-}
-
-type Alerts struct {
-	UserID  string         `src:"userID" dest:"user_id" fkey:"users,user_id"`
-	URL     string         `src:"url" dest:"url"`
-	Message string         `src:"message" dest:"message"`
-	Type    string         `src:"type" dest:"type"`
-	Data    map[string]any `src:"data" dest:"data" default:"{}"`
-}
-
-type Poppypaw struct {
-	UserID    string    `src:"id" dest:"user_id" fkey:"users,user_id"`
-	NotifID   string    `src:"notifId" dest:"notif_id"`
-	Auth      string    `src:"auth" dest:"auth"`
-	P256dh    string    `src:"p256dh" dest:"p256dh"`
-	Endpoint  string    `src:"endpoint" dest:"endpoint"`
-	CreatedAt time.Time `src:"createdAt" dest:"created_at" default:"NOW()"`
-	UA        string    `src:"ua" dest:"ua" default:"''"`
-}
-
-type Silverpelt struct {
-	UserID    string    `src:"userID" dest:"user_id" fkey:"users,user_id"`
-	BotID     string    `src:"botID" dest:"bot_id" fkey:"bots,bot_id"`
-	CreatedAt time.Time `src:"createdAt" dest:"created_at" default:"NOW()"`
-	LastAcked time.Time `src:"lastAcked" dest:"last_acked" default:"NOW()"`
-}
-
-type RPCRequests struct {
-	UserID    string    `src:"userID" dest:"user_id" fkey:"users,user_id"`
-	Method    string    `src:"method" dest:"method"`
-	CreatedAt time.Time `src:"createdAt" dest:"created_at" default:"NOW()"`
-}
-
-type Apps struct {
-	AppID          string         `src:"appID" dest:"app_id"`
-	UserID         string         `src:"userID" dest:"user_id" fkey:"users,user_id"`
-	Position       string         `src:"position" dest:"position"`
-	ReviewFeedback string         `src:"review_feedback,omitempty" dest:"review_feedback" default:"null"`
-	CreatedAt      time.Time      `src:"createdAt" dest:"created_at" default:"NOW()"`
-	Questions      map[string]any `src:"questions" dest:"questions" default:"{}"`
-	Answers        map[string]any `src:"answers" dest:"answers" default:"{}"`
-	State          string         `src:"state" dest:"state" default:"'pending'"`
-}
-
-type Blog struct {
-	Slug        string    `src:"s" dest:"slug"`
-	Title       string    `src:"title" dest:"title"`
-	Description string    `src:"description" dest:"description"`
-	UserID      string    `src:"userID" dest:"user_id" fkey:"users,user_id"`
-	CreatedAt   time.Time `src:"createdAt" dest:"created_at" default:"NOW()"`
-	Content     string    `src:"content" dest:"content"`
-	Draft       bool      `src:"draft" dest:"draft"`
-	Tags        []string  `src:"tags" dest:"tags"`
-}
+var botTransforms = map[string]cli.TransformFunc{}
 
 func main() {
 	// Place all schemas to be used in the tool here
 
 	cli.Main(cli.App{
 		SchemaOpts: cli.SchemaOpts{
-			TableName: "infinity",
+			TableName: "dscjobs",
 		},
 		// Required
 		LoadSource: func(name string) (cli.Source, error) {
-			sess, err := discordgo.New("Bot " + os.Getenv("DISCORD_TOKEN"))
-
-			if err != nil {
-				panic(err)
-			}
-
-			sess.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMembers
-
-			err = sess.Open()
-
-			if err != nil {
-				panic(err)
-			}
-
 			switch name {
 			case "mongo":
 				source = mongo.MongoSource{
 					ConnectionURL:  os.Getenv("MONGO"),
-					DatabaseName:   "infinity",
-					IgnoreEntities: []string{"sessions"},
+					DatabaseName:   "dscjobs",
+					IgnoreEntities: []string{},
 				}
 
 				err := source.Connect()
@@ -546,25 +118,11 @@ func main() {
 				}
 
 				return source, nil
-			case "json":
-				jsonSource := jsonfile.JsonFileStore{
-					Filename:       "backup.json",
-					IgnoreEntities: []string{"sessions"},
-				}
-
-				err := jsonSource.Connect()
-
-				if err != nil {
-					return nil, err
-				}
-
-				return jsonSource, nil
 			}
 
 			return nil, errors.New("unknown source")
 		},
-		// Optional, experimental
-		BackupFunc: func(source cli.Source) {
+		BackupFunc: func(src cli.Source) {
 			var err error
 			sess, err = discordgo.New("Bot " + os.Getenv("DISCORD_TOKEN"))
 
@@ -580,60 +138,63 @@ func main() {
 				panic(err)
 			}
 
-			cli.BackupTool(source, "users", User{}, cli.BackupOpts{
-				IgnoreFKError:     true,
-				IgnoreUniqueError: true,
-				Transforms:        userTransforms,
+			cli.BackupTool(source, "members", User{}, cli.BackupOpts{
+				RenameTo:   "users",
+				IndexCols:  []string{},
+				Transforms: userTransforms,
 			})
 
-			cli.BackupTool(source, "apps", Apps{}, cli.BackupOpts{})
-
-			cli.BackupTool(source, "bots", Bot{}, cli.BackupOpts{
-				IndexCols:  []string{"bot_id", "staff_bot", "cross_add", "api_token", "lower(vanity)"},
+			cli.BackupTool(source, "users", CV{}, cli.BackupOpts{
+				RenameTo:   "cv",
+				IndexCols:  []string{},
 				Transforms: botTransforms,
 			})
-			cli.BackupTool(source, "claims", Claims{}, cli.BackupOpts{
-				RenameTo: "reports",
-			})
-			cli.BackupTool(source, "announcements", Announcements{}, cli.BackupOpts{
-				Transforms: announcementTransforms,
-			})
-			cli.BackupTool(source, "votes", Votes{}, cli.BackupOpts{
-				IgnoreFKError: true,
-			})
-			cli.BackupTool(source, "packages", Packs{}, cli.BackupOpts{
-				IgnoreFKError: true,
-				RenameTo:      "packs",
-				Transforms:    packTransforms,
-			})
-			cli.BackupTool(source, "reviews", Reviews{}, cli.BackupOpts{
-				IgnoreFKError: true,
-				Transforms:    reviewTransforms,
-			})
-			cli.BackupTool(source, "tickets2", Tickets{}, cli.BackupOpts{
-				IgnoreFKError: true,
-				RenameTo:      "tickets",
+
+			cli.BackupTool(source, "details", Details{}, cli.BackupOpts{
+				IndexCols:  []string{},
+				Transforms: botTransforms,
 			})
 
-			cli.BackupTool(source, "rpc_requests", RPCRequests{}, cli.BackupOpts{})
-
-			cli.BackupTool(source, "poppypaw", Poppypaw{}, cli.BackupOpts{})
-
-			cli.BackupTool(source, "silverpelt", Silverpelt{}, cli.BackupOpts{})
-
-			cli.BackupTool(source, "alerts", Alerts{}, cli.BackupOpts{})
-
-			cli.BackupTool(source, "action_logs", ActionLog{}, cli.BackupOpts{})
-
-			cli.BackupTool(source, "onboard_data", OnboardData{}, cli.BackupOpts{})
-
-			cli.BackupTool(source, "pack_votes", PackVotes{}, cli.BackupOpts{})
-
-			cli.BackupTool(source, "blogs", Blog{}, cli.BackupOpts{})
+			cli.BackupTool(source, "requests", Requests{}, cli.BackupOpts{
+				IndexCols:  []string{},
+				Transforms: botTransforms,
+			})
 
 			migrations.Migrate(context.Background(), cli.Pool)
 
-			cli.Pool.Exec(context.Background(), "DELETE FROM bots WHERE bot_id = 'SKIP' OR client_id = 'SKIP'")
+			// Handle details from old
+			col := source.Database.Collection("users")
+
+			cur, err := col.Find(ctx, bson.M{})
+
+			if err != nil {
+				panic(err)
+			}
+
+			for cur.Next(ctx) {
+				var data struct {
+					UserID  string `bson:"userID"`
+					Details []struct {
+						Exp        any `bson:"exp"`
+						ExpServers any `bson:"exp_servers"`
+						Active     any `bson:"active"`
+						Salary     any `bson:"salary"`
+					} `bson:"details"`
+				}
+
+				err := cur.Decode(&data)
+
+				if err != nil {
+					fmt.Println(data)
+					panic(err)
+				}
+
+				_, err = cli.Pool.Exec(context.Background(), "INSERT INTO details (userID, exp, expServers, active, salary) VALUES ($1, $2, $3, $4, $5)", data.UserID, data.Details[0].Exp, data.Details[0].ExpServers, data.Details[0].Active, data.Details[0].Salary)
+
+				if err != nil {
+					panic(err)
+				}
+			}
 		},
 	})
 }

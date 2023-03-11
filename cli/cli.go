@@ -162,19 +162,25 @@ func BackupTool(source Source, schemaName string, schema any, opts BackupOpts) {
 		return
 	}
 
+	var pgSName string = schemaName
+
+	if opts.RenameTo != "" {
+		pgSName = opts.RenameTo
+	}
+
 	var err error
 	var cerr error
 
 	if len(backupList) != 0 {
 		// Try deleting but ignore if delete fails
-		_, err = Pool.Exec(ctx, "DROP TABLE "+schemaName)
+		_, err = Pool.Exec(ctx, "DROP TABLE "+pgSName)
 
 		if err != nil {
-			NotifyMsg("error", "Failed to drop table "+schemaName+": "+err.Error())
+			NotifyMsg("error", "Failed to drop table "+pgSName+": "+err.Error())
 		}
 	}
 
-	_, pgerr := Pool.Exec(ctx, "CREATE TABLE "+schemaName+" (itag UUID PRIMARY KEY NOT NULL DEFAULT uuid_generate_v4())")
+	_, pgerr := Pool.Exec(ctx, "CREATE TABLE "+pgSName+" (itag UUID PRIMARY KEY NOT NULL DEFAULT uuid_generate_v4())")
 
 	if pgerr != nil {
 		panic(pgerr)
@@ -216,9 +222,9 @@ func BackupTool(source Source, schemaName string, schema any, opts BackupOpts) {
 		}
 
 		// Create column
-		_, err := Pool.Exec(ctx, "ALTER TABLE "+schemaName+" ADD COLUMN "+tag[0]+" "+strings.Join(tag[1:], " ")+uniqueVal+defaultVal)
+		_, err := Pool.Exec(ctx, "ALTER TABLE "+pgSName+" ADD COLUMN "+tag[0]+" "+strings.Join(tag[1:], " ")+uniqueVal+defaultVal)
 		if err != nil {
-			NotifyMsg("error", "ALTER TABLE "+schemaName+" ADD COLUMN "+tag[0]+" "+strings.Join(tag[1:], " ")+uniqueVal+defaultVal)
+			NotifyMsg("error", "ALTER TABLE "+pgSName+" ADD COLUMN "+tag[0]+" "+strings.Join(tag[1:], " ")+uniqueVal+defaultVal)
 			panic(err)
 		}
 
@@ -282,7 +288,7 @@ func BackupTool(source Source, schemaName string, schema any, opts BackupOpts) {
 
 		Bar.Increment()
 
-		var sqlStr string = "INSERT INTO " + schemaName + " ("
+		var sqlStr string = "INSERT INTO " + pgSName + " ("
 
 		for _, field := range reflect.VisibleFields(structType) {
 			if field.Tag.Get("omit") == "true" {
@@ -445,16 +451,6 @@ func BackupTool(source Source, schemaName string, schema any, opts BackupOpts) {
 					fmt.Println(reflect.TypeOf(arg), arg)
 				}
 			}
-			panic(pgerr)
-		}
-	}
-
-	if opts.RenameTo != "" {
-		// Rename postgres table
-		sqlStr := "ALTER TABLE " + schemaName + " RENAME TO " + opts.RenameTo
-		_, pgerr = Pool.Exec(ctx, sqlStr)
-
-		if pgerr != nil {
 			panic(pgerr)
 		}
 	}
